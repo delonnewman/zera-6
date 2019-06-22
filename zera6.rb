@@ -86,19 +86,13 @@ module Zera6
     end
 
     def retract(facts)
-      if facts.is_a?(Hash)
-        assert_hash(facts)
-      elsif facts.respond_to?(:facts)
-        assert(facts.facts)
-      else
-        tick!
-        @facts[@t] = facts.map { |f| [:retraction] + f }
-        facts.each do |fact|
-          index_eavt(fact, false)
-          index_aevt(fact, false)
-          index_avet(fact, false)
-          index_vaet(fact, false)
-        end
+      tick!
+      @facts[@t] = facts.map { |f| [:retraction] + f }
+      facts.each do |fact|
+        index_eavt(fact, false)
+        index_aevt(fact, false)
+        index_avet(fact, false)
+        index_vaet(fact, false)
       end
     end
 
@@ -143,7 +137,7 @@ module Zera6
 
     private
 
-    def assert_hash(hash, eid = hash.hash)
+    def assert_hash(hash, eid = hash[:'db/id'] || hash.object_id)
       facts = hash.map do |(attr, value)|
         [eid, attr, value]
       end
@@ -315,7 +309,7 @@ DB.assert([[:delon, :likes, :jazz],
            [:delon, :loves, :jehovah],
            [:delon, :loves, :jackie]])
 
-DB.assert({'db/ident': :kalob,
+DB.assert({'db/id': :kalob,
            name: 'Kalob',
            age: 14,
            likes: :pizza,
@@ -333,7 +327,9 @@ DB.assert([[:jackie, :wife_of, :delon]])
 DB.assert([[:delon, :husband_of, :jackie]])
 
 DB.assert([[:anna, :mother_of, :jackie], [:anna, :mother_of, :mike], [:skye, :mother_of, :delon], [:skye, :mother_of, :devin]])
-DB.assert({name: 'Robin', age: 29, likes: :icecream, loves: :jehovah, mother_of: :kalob})
+DB.assert([[:marion, :mother_of, :skye], [:marion, :mother_of, :robin]])
+DB.assert([[:skye, :sex, :female]])
+DB.assert({'db/id': :robin, name: 'Robin', age: 29, likes: :icecream, loves: :jehovah, mother_of: :kalob, sex: :female})
 
 DB.assert([[:devin, :sex, :male], [:delon, :sex, :male]])
 
@@ -358,4 +354,8 @@ end
 
 def brothers?(a, b)
   siblings?(a, b) and DB.lookup([a, :sex, :male]) and DB.lookup([b, :sex, :male])
+end
+
+def sisters?(a, b)
+  siblings?(a, b) and DB.lookup([a, :sex, :male]) and DB.lookup([b, :sex, :female])
 end

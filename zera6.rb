@@ -1,66 +1,41 @@
 require 'set'
+require 'contracts'
+
+C = Contracts
 
 module Zera6
-  class Object
-  end
-
-  class Cons < Object
-    include Enumerable
-
-    attr_reader :car, :cdr
-  
-    def self.list(*args)
-      xs = nil
-      x = args.last
-      while not x.nil?
-        xs = Cons.new(x, xs)
-        args = args.slice(0, args.length - 1)
-        x = args.last
-      end
-      xs
-    end
-
-    def initialize(car, cdr)
-      @car, @cdr = car, cdr
-    end
-  
-    def facts
-      if cdr.nil?
-        [[object_id, :car, car], [object_id, :cdr, cdr]]
-      else
-        [[object_id, :car, car], [object_id, :cdr, cdr.object_id]] + cdr.facts
-      end
-    end
-
-    def each
-      if cdr.nil?
-        yield car
-      else
-        x = car
-        xs = cdr
-        while not xs.nil?
-          yield x
-          x = xs.car
-          xs = xs.cdr
-        end
-      end
-      self
-    end
-
-    def to_s
-      "(#{map(&:to_s).join(' ')})"
-    end
-  end
-
   class Database
+    include Contracts::Core
+
     attr_reader :t
+
+    BASE_SCHEMA = [
+      {'zera/id': :'zera/id'},
+      {'zera/id': :'zera/cardinality', 'zera/type': :'zera.type/ref'},
+      {'zera/id': :'zera.cardinality/one'},
+      {'zera/id': :'zera.cardinality/many'},
+      {'zera/id': :'zera/type', 'zera/type': :'zera.type/ref'},
+      {'zera/id': :'zera.type/string'},
+      {'zera/id': :'zera.type/boolean'},
+      {'zera/id': :'zera.type/float'},
+      {'zera/id': :'zera.type/integer'},
+      {'zera/id': :'zera.type/keyword'},
+      {'zera/id': :'zera.type/ref'},
+      {'zera/id': :'zera/doc', 'zera/type': :'zera.type/string'},
+      {'zera/id': :'zera/component?', 'zera/type': :'zera.type/boolean'},
+    ]
+
+    def self.init
+      db = new
+      db.assert(BASE_SCHEMA)
+      db
+    end
 
     def initialize
       @eavt = {}
       @aevt = {}
       @avet = {}
       @vaet = {}
-      @facts = {}
       @t = 0
     end
 
@@ -68,23 +43,30 @@ module Zera6
       @t += 1
     end
 
+    Contract C::ArrayOf[C::Or[Hash, Array]] => Database
     def assert(facts)
-      if facts.is_a?(Hash)
-        assert_hash(facts)
-      elsif facts.respond_to?(:facts)
-        assert(facts.facts)
-      else
-        tick!
-        @facts[@t] = facts.map { |f| [:assertion] + f }
-        facts.each do |fact|
+      tick!
+      facts.each do |fact|
+        if fact.is_a?(Hash)
+          assert_hash(fact)
+        else
+          e, a, v = fact
+          fact = if v.is_a?(Hash)
+                   ref = assert_hash(v)
+                   [e, a, ref]
+                 else
+                   fact
+                 end
           index_eavt(fact)
           index_aevt(fact)
           index_avet(fact)
           index_vaet(fact)
         end
       end
+      self
     end
 
+    Contract C::ArrayOf[Array] => Database
     def retract(facts)
       tick!
       @facts[@t] = facts.map { |f| [:retraction] + f }
@@ -94,6 +76,7 @@ module Zera6
         index_avet(fact, false)
         index_vaet(fact, false)
       end
+      self
     end
 
     def lookup(pattern, asof = t)
@@ -121,6 +104,17 @@ module Zera6
       end
     end
 
+    Contract C::ArrayOf[Array] => C::Any
+    def pull(form, asof = t)
+      i = -1
+      var_indexes = form.flat_map { |x| x.select(&method(:var?)) }
+                        .reduce({}) { |h, var| h[var] ? h : h.merge!(var => i += 1) }
+      p form.map { |x| x.select(&method(:var?)).map { |v| var_indexes[v] } }
+      form.map(&method(:lookup)).reduce(Set.new) do |s, res|
+
+      end
+    end
+
     def entity(eid, asof = t)
       e_lookup(eid, asof).reduce({}) do |h, (attr, value)|
         if (v = h[attr])
@@ -137,11 +131,12 @@ module Zera6
 
     private
 
-    def assert_hash(hash, eid = hash[:'db/id'] || hash.object_id)
+    def assert_hash(hash, eid = hash[:'zera/id'] || hash.object_id)
       facts = hash.map do |(attr, value)|
         [eid, attr, value]
       end
       assert(facts)
+      eid
     end
 
     def var?(x)
@@ -155,7 +150,7 @@ module Zera6
       else
         idx.flat_map do |(attr, xs)|
           xs.select { |_e, t| t.keys.first <= asof }.map { |x| [attr, x[0]] }
-        end
+        end.to_set
       end
     end
 
@@ -166,18 +161,18 @@ module Zera6
       else
         idx.flat_map do |(attr, xs)|
           xs.select { |_v, t| t.keys.first <= asof }.map { |x| [attr, x[0]] }
-        end
+        end.to_set
       end
     end
 
     def a_lookup(a, asof)
       idx = @aevt[a]
       if idx.nil?
-        []
+        nil
       else
         idx.flat_map do |(e, xs)|
           xs.select { |_v, t| t.keys.first <= asof }.map { |x| [e, x[0]] }
-        end
+        end.to_set
       end
     end
 
@@ -187,7 +182,7 @@ module Zera6
         nil
       else
         x.select { |_e, t| t.keys.first <= asof }
-         .map { |x| [x[0]] }
+         .map { |x| [x[0]] }.to_set
       end
     end
 
@@ -201,12 +196,12 @@ module Zera6
             nil
           else
             if x.any? { |t, _| t <= asof }
-              [attr]
+              Set[attr]
             else
               nil
             end
           end
-        end.reject(&:nil?)
+        end.reject(&:nil?).to_set
       end
     end
 
@@ -216,7 +211,8 @@ module Zera6
         nil
       else
         idx.select { |_v, t| t.keys.first <= asof }
-           .map { |x| [x[0]] }
+          .map { |x| [x[0]] }
+          .to_set
       end
     end
 
@@ -289,73 +285,51 @@ module Zera6
       end
     end
   end
+
+  module Lang
+    DB = Zera6::Database.init
+    
+    def self.eval(form)
+      case form
+      when String, Float, Symbol
+        form
+      when Array
+        case form[0]
+        when :assert
+          DB.assert(form.drop(1))
+        else
+          raise "Not implemented"
+        end
+      else
+        raise "Unknown form: #{form.inspect}"
+      end
+    end
+  end
 end
 
-include Zera6
+Zera6::Lang.eval(
+  [:assert,
+   {'zera/id': :'zera.string/value',
+    'zera/type': :'zera.type/string'},
 
-DB = Database.new
+   {'zera/id': :'zera.integer/value',
+    'zera/type': :'zera.type/integer'},
 
-DB.assert([[:jackie, :name, "Jackie Newman"],
-           [:jackie, :super_hero_name, "Luna"],
-           [:jackie, :likes, :jazz],
-           [:jackie, :likes, :delon],
-           [:jackie, :likes, :red],
-           [:jackie, :likes, :coffee],
-           [:jackie, :loves, :jehovah],
-           [:jackie, :loves, :delon]])
+   {'zera/id': :'zera.float/value',
+    'zera/type': :'zera.type/float'},
 
-DB.assert([[:delon, :likes, :jazz],
-           [:delon, :likes, :jackie],
-           [:delon, :loves, :jehovah],
-           [:delon, :loves, :jackie]])
+   {'zera/id': :'zera.symbol/name',
+    'zera/type': :'zera.type/string'},
+   {'zera/id': :'zera.symbol/namespace',
+    'zera/type': :'zera.type/string'},
+   {'zera/id': :'zera.symbol/value',
+    'zera/type': :'zera.type/ref'},
 
-DB.assert({'db/id': :kalob,
-           name: 'Kalob',
-           age: 14,
-           likes: :pizza,
-           loves: :jehovah,
-           rapper_name: "Lil-Putt-Putt",
-           super_hero_name: "K-Man",
-           secondary_rapper_name: "Young Kay"})
+   {'zera/id': :'zera.cons/car',
+    'zera/type': :'zera.type/ref'},
+   {'zera/id': :'zera.cons/cdr',
+    'zera/type': :'zera.type/ref'},
 
-DB.assert([[:jackie, :likes, :jazz]])
-DB.assert([[:jackie, :likes, :hot_coffee]])
-DB.retract([[:jackie, :likes, :coffee]])
-
-DB.assert([[:jackie, :married, :delon]])
-DB.assert([[:jackie, :wife_of, :delon]])
-DB.assert([[:delon, :husband_of, :jackie]])
-
-DB.assert([[:anna, :mother_of, :jackie], [:anna, :mother_of, :mike], [:skye, :mother_of, :delon], [:skye, :mother_of, :devin]])
-DB.assert([[:marion, :mother_of, :skye], [:marion, :mother_of, :robin]])
-DB.assert([[:skye, :sex, :female]])
-DB.assert({'db/id': :robin, name: 'Robin', age: 29, likes: :icecream, loves: :jehovah, mother_of: :kalob, sex: :female})
-
-DB.assert([[:devin, :sex, :male], [:delon, :sex, :male]])
-
-DB.assert(Cons.list(1, 2, 3, 4, 5))
-
-p DB.lookup([:who?, :likes, :jazz])
-p DB.lookup([:who?, :likes, :what?])
-p DB.lookup([:who?, :does?, :jazz])
-p DB.lookup([:who?, :does?, :what?])
-p DB.lookup([:jackie, :likes, :jazz])
-p DB.lookup([:jackie, :likes, :cold_food])
-p DB.lookup([:e?, :name, "Kalob"])
-p DB.lookup([:jackie, :does?, :what?])
-p DB.entity(:jackie)
-p DB.lookup([:jackie, :does?, :delon])
-p DB.lookup([:jackie, :loves, :what?])
-p DB.lookup([:who?, :loves, :jehovah])
-
-def siblings?(a, b)
-  DB.lookup([:e?, :mother_of, a]) == DB.lookup([:e?, :mother_of, b])
-end
-
-def brothers?(a, b)
-  siblings?(a, b) and DB.lookup([a, :sex, :male]) and DB.lookup([b, :sex, :male])
-end
-
-def sisters?(a, b)
-  siblings?(a, b) and DB.lookup([a, :sex, :male]) and DB.lookup([b, :sex, :female])
-end
+   {'zera.cons/car': {'zera.integer/value': 1},
+    'zera.cons/cdr': {'zera.cons/car': 0}},
+])

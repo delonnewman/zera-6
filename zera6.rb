@@ -43,9 +43,15 @@ module Zera6
       @t += 1
     end
 
-    Contract C::ArrayOf[C::Or[Hash, Array]] => Database
+    Contract C::Or[Hash, C::ArrayOf[C::Or[Hash, Array]]] => Database
     def assert(facts)
       tick!
+
+      if facts.is_a?(Hash)
+        assert_hash(facts)
+        return self
+      end
+
       facts.each do |fact|
         if fact.is_a?(Hash)
           assert_hash(fact)
@@ -69,7 +75,7 @@ module Zera6
     Contract C::ArrayOf[Array] => Database
     def retract(facts)
       tick!
-      @facts[@t] = facts.map { |f| [:retraction] + f }
+      #@facts[@t] = facts.map { |f| [:retraction] + f }
       facts.each do |fact|
         index_eavt(fact, false)
         index_aevt(fact, false)
@@ -288,7 +294,7 @@ module Zera6
 
   module Lang
     DB = Zera6::Database.init
-    
+
     def self.eval(form)
       case form
       when String, Float, Symbol

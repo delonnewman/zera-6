@@ -41,7 +41,7 @@ DB.assert({'db/id': :robin, name: 'Robin', age: 29, likes: :icecream, loves: :je
 
 DB.assert([[:devin, :sex, :male], [:delon, :sex, :male]])
 
-DB.assert(Cons.list(1, 2, 3, 4, 5))
+#DB.assert(Cons.list(1, 2, 3, 4, 5))
 
 p DB.lookup([:who?, :likes, :jazz])
 p DB.lookup([:who?, :likes, :what?])
